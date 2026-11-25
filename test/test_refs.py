@@ -213,6 +213,32 @@ def test_head_rename_retains_literal_prefixed_branch_name(object_format):
 
 @pytest.mark.parametrize("object_format", ["sha1", "sha256"])
 @pytest.mark.parametrize("ref_format", ["files", "reftable"])
+def test_tracking_branch_matches_gits_upstream(object_format, ref_format):
+    with fixture_repo("tracking-branch.sh", object_format, ref_format) as repo:
+        for branch, upstream_type, path in (
+            ("mapped", RemoteReference, "refs/remotes/mirror/feature"),
+            ("unfetched", RemoteReference, "refs/remotes/mirror/unfetched"),
+            ("numbered", RemoteReference, "refs/remotes/1.10/main"),
+            ("local", Head, "refs/heads/local-upstream"),
+        ):
+            upstream = repo.heads[branch].tracking_branch()
+            assert type(upstream) is upstream_type
+            assert upstream.path == path
+            assert path == repo.git.for_each_ref("--format=%(upstream)", "refs/heads/" + branch)
+        for branch in ("by-url", "unmapped"):
+            assert repo.heads[branch].tracking_branch() is None
+            assert repo.git.for_each_ref("--format=%(upstream)", "refs/heads/" + branch) == ""
+    with fixture_repo("tracking-branch.sh", object_format, ref_format, subdir="empty") as repo:
+        upstream = repo.active_branch.tracking_branch()
+        assert type(upstream) is RemoteReference
+        assert upstream.path == "refs/remotes/origin/main"
+        local = Head(repo, "refs/heads/solo").tracking_branch()
+        assert type(local) is Head
+        assert local.path == "refs/heads/main"
+
+
+@pytest.mark.parametrize("object_format", ["sha1", "sha256"])
+@pytest.mark.parametrize("ref_format", ["files", "reftable"])
 @pytest.mark.parametrize("force_cli", [False, True])
 def test_reference_lookup_does_not_guess_missing_names(object_format, ref_format, force_cli):
     with fixture_repo("exact-refs.sh", object_format, ref_format) as repo:

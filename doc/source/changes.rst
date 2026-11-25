@@ -110,10 +110,12 @@ API changes
   suppresses its include graph. Malformed configuration and invalid repository
   extensions can fail before downstream custom validation runs. Callers using
   custom metadata views must prepare them before opening with ``Repo``.
-* ``Head.tracking_branch()`` returns a local ``Head`` when Git configures the
-  current repository (``branch.<name>.remote=.``) as the upstream, instead of
-  constructing an invalid ``refs/remotes/./...`` reference. Git resolves the
-  upstream location; remote tracking branches retain their existing behavior.
+* ``Head.tracking_branch()`` returns the upstream Git reports
+  (``for-each-ref --format=%(upstream)``): a local ``Head`` for
+  ``branch.<name>.remote=.``, and a remote-tracking reference that follows the
+  remote's fetch refspecs. It returns ``None`` where Git reports no upstream,
+  such as for a remote given as a URL or a remote whose refspecs do not map the
+  branch. Unborn branches still use the configured remote and branch names.
 * ``GitCmdObjectDB`` no longer inherits ``LooseObjectDB``. Its object reads,
   writes, existence checks, and enumeration use Git, including packed objects.
   Precompressed input streams and custom object-output writers are unsupported.

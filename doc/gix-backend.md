@@ -106,13 +106,14 @@ Object queries continue through `object_data()` and the supported
 `Repository.try_find_header()`/`find_object()` APIs, with the existing large-object
 and diagnostic CLI fallbacks. Storage uses the existing `hash_object` dispatch.
 
-`Head.tracking_branch()` asks Git's `rev-parse --symbolic-full-name` to resolve
-local upstreams configured with `branch.<name>.remote=.`. GixPython does not
-expose the corresponding Git-compatible upstream configuration resolver; this
-path retains CLI. Released GitPython 3.2.1 returns an invalid remote reference
-for these upstreams, preventing angr 10.0.4.post1 from reporting a valid local
-tracking branch. A native replacement must expose Git's
-local-upstream resolution, including its validation and diagnostics.
+`Head.tracking_branch()` asks Git's `for-each-ref --format=%(upstream)` for the
+branch's upstream, which maps the configured branch through the remote's fetch
+refspecs and resolves local upstreams configured with `branch.<name>.remote=.`.
+Unborn branches have no ref to list and keep using the configured names.
+Released GitPython 3.2.1 returns an invalid remote reference for local
+upstreams, preventing angr 10.0.4.post1 from reporting a valid local tracking
+branch. GixPython 0.4.0's `branch_remote_tracking_ref_name()` matches Git for
+remote upstreams but not for local ones (GIX-47), so this path retains CLI.
 
 Revision path results retain the root tree's empty path so `Repo.rev_parse("HEAD:")`
 can be iterated, as required by MCP Server Git 2026.10.19. Git's `objectmode`
@@ -1019,6 +1020,7 @@ identify the historical fixture where needed.
 | GIX-43 | Bug (open) | With Git 2.54.0 and GixPython 0.4.0, `commit.sh spaced-email` stores spaces inside the email brackets ahead of a date with trailing fields. Git's `%ae` and `%ce` preserve these bytes, but native commit author and committer accessors trim them. The native tagger accessor preserves the spaces. | Expose a signature identity that preserves the stored fields with Git-compatible delimiters. `object_metadata()` uses the existing CLI fallback if the native identity fails the raw header comparison. `test_deserialization_preserves_email_whitespace` verifies author, committer and tagger properties. |
 | GIX-44 | Bug (open) | With Git 2.54.0 and GixPython 0.3.0, the `branch-dot-alias` case of `submodule-cases.sh` sets `HEAD` to `refs/heads/dev`, which points to `refs/heads/master`. `Repository.head_name()` and `Repository.head_ref().name()` return `refs/heads/dev`. `git symbolic-ref HEAD` returns `refs/heads/master`, and `git submodule update --remote` selects `origin/master` for `branch = .`. `test_update_to_latest_revision_follows_superproject_branch_alias` verifies branch selection on clone and later updates. Redirect `dev` to `refs/heads/missing` and Git returns that terminal name, while `Reference.follow_to_object()` raises a missing-ref error. | Expose the terminal symbolic target with Git-compatible handling of unborn, detached and invalid references. `Submodule._branch_for_update()` uses recursive `git symbolic-ref --quiet -- HEAD` through the CLI fallback. |
 | GIX-45 | Bug (open) | Git 2.54.0 `submodule update --remote --no-fetch` rejects a bare `branch` key in `.gitmodules` with `missing value for 'submodule.module.branch'`, including before or after `branch = dev`. In GixPython 0.3.0 and 0.4.0, `ModulesFile.from_bytes()` accepts the bare key and `ModulesFile.branch()` returns `None` for an absent or single bare key. `ConfigFile.boolean()` distinguishes these two inputs with `None` and `True`, respectively. When the bare key precedes `branch = dev`, both `ModulesFile.branch().name_bytes()` and `ConfigFile.string()` return `b"dev"`. For an explicit `branch =` with an `origin` remote, Git attempts to resolve `refs/remotes/origin/`, `ModulesFile.branch().name_bytes()` returns `b"HEAD"`, and `ConfigFile.string()` returns `b""`. | Reject valueless branches in a Git-compatible mode or expose all raw values, including implicit ones. `submodule_config()` falls back to the Git config reader for possible bare `branch` keys and uses `ConfigFile.string()` for assigned values. `test_valueless_branch_is_invalid` covers listing and rereads with a single bare key and one followed by an assignment. |
+| GIX-47 | Bug (open) | With Git 2.56.0 and GixPython 0.4.0, `Repository.branch_remote_tracking_ref_name("refs/heads/<branch>", gix.Direction.Fetch)` returns `None` for a branch configured with `branch.<branch>.remote=.` and `branch.<branch>.merge=refs/heads/main`, while `git for-each-ref --format=%(upstream)` reports `refs/heads/main`. For remote upstreams it matched Git with a non-default fetch refspec, a branch that was not fetched yet and a remote given as a URL. | Resolve local upstreams like Git. `Head.tracking_branch()` uses `git for-each-ref --format=%(upstream)` through the CLI; `test_tracking_branch_matches_gits_upstream` covers both kinds. |
 
 GIX-14 also covers configured worktree symlink resolution. On macOS with
 GixPython 0.3.0, CPython 3.12.14 and Git 2.54.0, set a submodule's

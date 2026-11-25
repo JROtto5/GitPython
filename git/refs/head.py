@@ -10,14 +10,13 @@ __all__ = ["HEAD", "Head"]
 
 from git.config import GitConfigParser, SectionConstraint
 from git.exc import GitCommandError
-from git.util import join_path
 
 from .reference import Reference
 from .symbolic import SymbolicReference
 
 # typing ---------------------------------------------------
 
-from typing import Any, Sequence, TYPE_CHECKING, Union
+from typing import Any, Sequence, TYPE_CHECKING, Union, cast
 
 from git.cmd import Git
 from git.types import Commit_ish, PathLike
@@ -27,12 +26,6 @@ if TYPE_CHECKING:
     from git.repo import Repo
 
 # -------------------------------------------------------------------
-
-
-def strip_quotes(string: str) -> str:
-    if string.startswith('"') and string.endswith('"'):
-        return string[1:-1]
-    return string
 
 
 class HEAD(SymbolicReference):
@@ -202,29 +195,40 @@ class Head(Reference):
 
         return self
 
-    def tracking_branch(self) -> Union["RemoteReference", "Head", None]:
+    def tracking_branch(self) -> Union["RemoteReference", "Head", Reference, None]:
         """
         :return:
-            The remote reference or local head we are tracking, or ``None`` if we
-            are not a tracking branch.
+            The reference Git reports as this branch's upstream: usually a remote
+            reference, or a local head for ``branch.<name>.remote=.``. ``None`` if we
+            are not a tracking branch, or if Git maps the configuration to no
+            reference, as for a remote given as a URL.
+
+        :note:
+            The path follows the remote's fetch refspecs. If they map into another
+            directory under ``refs/remotes``, the result's
+            :attr:`~git.refs.remote.RemoteReference.remote_name` names that
+            directory, not the remote. An unborn branch has no ref for Git to look
+            up, so its configured remote and branch names are joined as they are.
         """
         from .remote import RemoteReference
 
         reader = self.config_reader()
         if reader.has_option(self.k_config_remote) and reader.has_option(self.k_config_remote_ref):
-            if reader.get_value(self.k_config_remote) == ".":
-                # Git resolves local-upstream configuration; do not construct a
-                # remote reference for the special local-repository selector.
-                path = self.repo.git._call_process_safe(
-                    "rev_parse", "--symbolic-full-name", f"{self.name}@{{upstream}}"
-                )
-                return Head(self.repo, path)
-            ref = Head(
-                self.repo,
-                Head.to_full_path(strip_quotes(reader.get_value(self.k_config_remote_ref))),
+            # Unlike `@{upstream}`, this also names a remote-tracking branch that
+            # has not been fetched yet.
+            output = self.repo.git._call_process_safe(
+                "for_each_ref", "--format=%(refname) %(upstream)", "--", self.path
             )
-            remote_refpath = RemoteReference.to_full_path(join_path(reader.get_value(self.k_config_remote), ref.name))
-            return RemoteReference(self.repo, remote_refpath)
+            for line in output.splitlines():
+                refname, _, path = line.partition(" ")
+                if refname == self.path:
+                    return cast(Reference, SymbolicReference.from_path(self.repo, path)) if path else None
+            # An unborn branch has no ref to list, so use the configured names.
+            remote = reader.get(self.k_config_remote)
+            merge = Head(self.repo, Head.to_full_path(reader.get(self.k_config_remote_ref)))
+            if remote == ".":
+                return merge
+            return RemoteReference(self.repo, RemoteReference.to_full_path(f"{remote}/{merge.name}"))
         # END handle have tracking branch
 
         # We are not a tracking branch.
