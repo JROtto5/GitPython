@@ -201,6 +201,32 @@ def test_pending_index_queries_removal_and_failed_update(repo):
     assert list(repo.index.iter_entries()) == []
 
 
+def test_virtual_index_edits_stay_pending(repo):
+    root = Path(repo.working_tree_dir)
+    published = Path(repo.index.path).read_bytes()
+    tree = repo.head.commit.tree
+    (root / "file").write_text("new")
+    for name, virtual in (("from_tree", IndexFile.from_tree(repo, tree)), ("new", IndexFile.new(repo, tree))):
+        virtual.add(["file"])
+        virtual.remove(["other"])
+        commit = virtual.commit("virtual", head=False)
+        assert commit.tree["file"].data_stream.read() == b"new"
+        assert "other" not in commit.tree
+        virtual.add(["file"])
+        with pytest.raises(ValueError, match="cannot be deferred"):
+            virtual.remove(["file"], working_tree=True)
+        assert (root / "file").exists()
+        assert [e.path for e in virtual.iter_entries()] == ["file"]
+        assert virtual.write_tree()["file"].data_stream.read() == b"new"
+        assert not Path(virtual.path).parent.exists()
+        written = root.parent / name
+        virtual.write(written)
+        assert [e.path for e in IndexFile(repo, written).iter_entries()] == ["file"]
+        virtual.remove(["file"])
+        assert list(IndexFile(repo, written).iter_entries()) == []
+    assert Path(repo.index.path).read_bytes() == published
+
+
 def test_malformed_index_failure_is_propagated(repo):
     with pytest.raises((ValueError, GitCommandError)):
         list(repo.index.iter_entries())

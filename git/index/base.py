@@ -98,7 +98,7 @@ class IndexFile(LazyMixin, git_diff.Diffable):
     unsafe_git_checkout_index_options = ["--prefix"]
     unsafe_git_read_tree_options = ["--index-output"]
 
-    __slots__ = ("repo", "_file_path", "_data", "_split_index")
+    __slots__ = ("repo", "_file_path", "_data", "_split_index", "_unbacked")
 
     S_IFGITLINK = S_IFGITLINK
     """Flags for a submodule."""
@@ -113,6 +113,7 @@ class IndexFile(LazyMixin, git_diff.Diffable):
         self.repo = repo
         self._data: Union[bytes, None] = None
         self._split_index = False
+        self._unbacked = False
         self._file_path: PathLike = file_path or self._index_path()
 
     def _read_entries(self, path: PathLike) -> Iterator[IndexEntry]:
@@ -297,6 +298,10 @@ class IndexFile(LazyMixin, git_diff.Diffable):
     def write(self, file_path: Union[None, PathLike] = None, ignore_extension_data: bool = False) -> None:
         """Publish the current index atomically; Git owns extension data.
 
+        :param file_path:
+            If given, publish to this path instead, and write later edits there. This
+            is how an index from :meth:`from_tree` gets a file of its own.
+
         ``ignore_extension_data`` has no effect.
         """
         original_path = self.path
@@ -307,6 +312,8 @@ class IndexFile(LazyMixin, git_diff.Diffable):
             except BaseException:
                 self._file_path = original_path
                 raise
+            if file_path:
+                self._unbacked = False
 
     @default_index
     def merge_tree(
@@ -376,7 +383,8 @@ class IndexFile(LazyMixin, git_diff.Diffable):
         :return:
             New :class:`IndexFile` instance. Its path will be undefined.
             If you intend to write such a merged Index, supply an alternate
-            ``file_path`` to its :meth:`write` method.
+            ``file_path`` to its :meth:`write` method. Until then,
+            :meth:`add` and :meth:`remove` keep their changes in memory.
         """
         if not 1 <= len(tree_sha) <= 3:
             raise ValueError("Specify between one and three trees")
@@ -420,7 +428,8 @@ class IndexFile(LazyMixin, git_diff.Diffable):
         :return:
             New :class:`IndexFile` instance. It will point to a temporary index location
             which does not exist anymore. If you intend to write such a merged Index,
-            supply an alternate ``file_path`` to its :meth:`write` method.
+            supply an alternate ``file_path`` to its :meth:`write` method. Until then,
+            :meth:`add` and :meth:`remove` keep their changes in memory.
 
         :note:
             In the three-way merge case, ``--aggressive`` will be specified to
@@ -448,6 +457,8 @@ class IndexFile(LazyMixin, git_diff.Diffable):
                 args[:0] = ["--reset", "--aggressive", "-i"]
             repo.git._call_process_safe("read_tree", *args, env={"GIT_INDEX_FILE": path}, **kwargs)
             index._accept_index(path, False)
+            # The directory is removed on return, so add() and remove() keep edits pending.
+            index._unbacked = True
             return index
 
     # UTILITIES
@@ -934,7 +945,8 @@ class IndexFile(LazyMixin, git_diff.Diffable):
 
         :param write:
             If ``True``, the index will be written once it was altered. Otherwise the
-            changes are retained as index-file bytes until publication.
+            changes are retained as index-file bytes until publication. Indexes from
+            :meth:`from_tree` retain them until written to a ``file_path``.
 
         :param write_extension_data:
             Retained for compatibility. Git manages index extensions and invalidates
@@ -1016,7 +1028,7 @@ class IndexFile(LazyMixin, git_diff.Diffable):
             entries_added.extend(entries)
         # END if there are base entries
 
-        self._update_entries(entries_added, write=write)
+        self._update_entries(entries_added, write=write and not self._unbacked)
 
         return entries_added
 
@@ -1088,6 +1100,7 @@ class IndexFile(LazyMixin, git_diff.Diffable):
 
         :param write:
             Publish the edit, or retain pending bytes for an index-only removal.
+            Indexes from :meth:`from_tree` retain them until written to a ``file_path``.
 
         :param kwargs:
             Additional keyword arguments to be passed to :manpage:`git-rm(1)`, such as
@@ -1105,6 +1118,7 @@ class IndexFile(LazyMixin, git_diff.Diffable):
                 options=Git._option_candidates([], kwargs),
                 unsafe_options=Git.unsafe_git_pathspec_from_file_options,
             )
+        write = write and not self._unbacked
         if working_tree and not write:
             raise ValueError("Working-tree removal cannot be deferred")
         args = []

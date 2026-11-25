@@ -198,6 +198,10 @@ API changes
   happy paths, Python glue failures and representative compatibility regressions.
   Historical timing-only tests are removed; the maintained backend benchmark
   checks result parity and CLI budgets.
+* Indexes from ``IndexFile.from_tree()`` and ``IndexFile.new()`` have no file of
+  their own. ``add()`` and ``remove()`` keep their edits pending until
+  ``write(file_path)``, instead of writing a stray temporary index in the git
+  directory.
 * ``IndexFile.remove()`` matches the paths of index entries, blobs, and submodules
   literally, so an entry named ``*.txt`` no longer removes every ``.txt`` file.
   Path strings keep their pathspec semantics. ``Submodule.move()`` and

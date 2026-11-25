@@ -51,6 +51,12 @@ pending_index_queries_removal_and_failed_update)
     printf old > file
     git add file
     ;;
+virtual_index_edits_stay_pending)
+    printf old > file
+    printf other > other
+    git add file other
+    git commit -qm initial
+    ;;
 malformed_index_failure_is_propagated)
     printf 'not an index' > .git/index
     ;;
